@@ -27,6 +27,20 @@ import { renderGraphiQL } from './renderGraphiQL';
 import type { DocumentNode, GraphQLError, GraphQLSchema } from 'graphql';
 import type { $Request, $Response } from 'express';
 
+/** 
+ * Query Validation Cache Hack
+ * 
+ * Validating the AST or `#validate` operation appears to be an `O(n^2)` operation. 
+ * This becomes apparent with large queries. Rather than pay this expense every 
+ * request we hash the inputs and cache the outcome.
+ * */
+import { createHash } from 'crypto';
+
+const sha256 = string =>
+  createHash('sha256').update(string, 'utf8').digest('hex');
+
+const cache = {};
+
 /**
  * Used to configure the graphqlHTTP middleware by providing a schema
  * and other configuration options.
@@ -219,7 +233,18 @@ function graphqlHTTP(options: Options): Middleware {
         }
 
         // Validate AST, reporting any errors.
-        const validationErrors = validate(schema, documentAST, validationRules);
+        const hash = sha256(
+          JSON.stringify(schema) +
+            JSON.stringify(source) +
+            validationRules.toString(),
+        );
+
+        if (!cache[hash]) {
+          cache[hash] = validate(schema, documentAST, validationRules);
+        }
+
+        const validationErrors = cache[hash];
+
         if (validationErrors.length > 0) {
           // Return 400: Bad Request if any validation errors exist.
           response.statusCode = 400;
